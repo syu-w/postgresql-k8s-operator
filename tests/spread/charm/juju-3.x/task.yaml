@@ -1,0 +1,25 @@
+summary: Build snaps that test the build-on/build-for architecture logic in snapcraft.
+
+environment:
+  JUJU_CHANNEL/juju_stable: latest/stable
+  JUJU_CHANNEL/juju_3_1: 3.1/stable
+  JUJU_CHANNEL/juju_edge: latest/edge
+  MICROK8S_CHANNEL: 1.29-strict/stable
+
+prepare: |
+  . "$TOOLS_DIR/deps.sh"
+  install_microk8s
+  install_juju
+  bootstrap_juju
+  install_charmcraft
+  tests.pkgs install postgresql libpq-dev
+  cd "${PROJECT_PATH}"
+
+restore: |
+  . "$TOOLS_DIR/deps.sh"
+  uninstall_juju
+  uninstall_microk8s
+  snap remove charmcraft --purge
+
+execute: |
+  tox -e integration -- --keep-models -vv --controller "${CONTROLLER_NAME}" tests/integration/test_charm.py

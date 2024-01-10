@@ -1,0 +1,132 @@
+project: craft-tests
+
+environment:
+  CHARM_CHANNEL: latest/stable
+  CHARMCRAFT_CHANNEL: latest/stable
+  JUJU_CHANNEL: latest/stable
+  JUJU_BUNDLE_CHANNEL: latest/stable
+  JUJU_CRASHDUMP_CHANNEL: latest/stable
+  LXD_CHANNEL: latest/stable
+
+  PROVIDER: microk8s
+  MICROK8S_ADDONS: dns hostpath-storage
+
+  JUJU_BOOTSTRAP_OPTIONS: --model-default test-mode=true --model-default automatically-retry-hooks=false --model-default #logging-config="<root>=DEBUG" 
+  JUJU_EXTRA_BOOTSTRAP_OPTIONS: ""
+  JUJU_BOOTSTRAP_TIMEOUT: "600"
+  JUJU_BOOTSTRAP_CONSTRAINTS: ""
+  CONTROLLER_NAME: "craft-test-$PROVIDER"
+
+  # important to ensure adhoc and linode/qemu behave the same
+  SUDO_USER: ""
+  SUDO_UID: ""
+
+  LANG: "C.UTF-8"
+  LANGUAGE: "en"
+
+  PROJECT_PATH: /charm-test
+  CRAFT_TEST_PATH: /charm-test/tests/spread/lib
+  TOOLS_DIR: /charm-test/tests/spread/tools
+  PATH: ${PROJECT_PATH}/.venv/bin/:$PATH:$TOOLS_DIR/snapd-testing-tools/tools/
+
+backends:
+  #google:
+  #  key: '$(HOST: echo "$SPREAD_GOOGLE_KEY")'
+  #  location: snapd-spread/us-east1-b
+  #  halt-timeout: 6h
+  #  systems:
+  #    - ubuntu-22.04-64:
+  #        workers: 1
+  #        storage: 20G
+  #        image: ubuntu-2204-64
+  multipass:
+    type: adhoc
+    environment:
+      SPREAD_EXTERNAL_ADDRESS: '$(HOST: echo "${SPREAD_EXTERNAL_ADDRESS:-localhost:8022}")'
+      TRUST_TEST_KEYS: "false"
+    allocate: |
+      # SPREAD_SYSTEM has the following format here 'ubuntu-XX.YY-64' and gets
+      # translated to an image XX.YY.
+      image="$(echo $SPREAD_SYSTEM | sed -e 's/ubuntu-\(.*\)-64/\1/')"
+      spread_name="$(echo ${image} | sed -e 's/\.//g')"
+      project_name="$(basename $(pwd))"
+      instance_name="spread-${project_name}-${spread_name}"
+
+      if [ -z "${image}" ]; then
+        FATAL "$SPREAD_SYSTEM is not supported!"
+      fi
+
+      multipass launch --cpus 4 --memory 8G --disk 25G --name "$instance_name" "$image"
+
+      # Get the IP from the instance
+      ip=$(multipass info --format csv "$instance_name" | tail -1 | cut -d\, -f3)
+      # Enable PasswordAuthertication for root over SSH.
+      multipass exec "$instance_name" -- \
+        sudo sh -c "echo $SPREAD_SYSTEM_USERNAME:$SPREAD_SYSTEM_PASSWORD | sudo chpasswd"
+      multipass exec "$instance_name" -- \
+        sudo sh -c \
+        "sed -i /etc/ssh/sshd_config -e 's/^PasswordAuthentication.*/PasswordAuthentication yes/' -e 's/^#PermitRootLogin.*/PermitRootLogin yes/'"
+      multipass exec "$instance_name" -- \
+        sudo systemctl restart ssh
+
+      ADDRESS "$ip"
+    discard: |
+      image="$(echo $SPREAD_SYSTEM | sed -e 's/ubuntu-\(.*\)-64/\1/')"
+      spread_name="$(echo ${image} | sed -e 's/\.//g')"
+      project_name="$(basename $(pwd))"
+      instance_name="spread-${project_name}-${spread_name}"
+
+      if [ -z "${image}" ]; then
+        FATAL "$SPREAD_SYSTEM is not supported!"
+      fi
+
+      multipass delete --purge "${instance_name}"
+    systems:
+      - ubuntu-22.04-64:
+          username: root
+          password: spread-ubuntu
+          workers: 1
+
+      #- ubuntu-20.04-64:
+      #    username: root
+      #    password: spread-ubuntu
+      #    workers: 1
+
+suites:
+  tests/spread/charm/:
+    summary: Spread tests
+    environment:
+      CHARMCRAFT_CHANNEL/charmcraft_stable: latest/stable
+      CHARMCRAFT_CHANNEL/charmcraft_edge: latest/edge
+
+exclude:
+  - .git
+  - .tox
+
+path: /charm-test
+
+prepare: |
+  if [[ -z $(ls -A "$TOOLS_DIR/snapd-testing-tools") ]]; then
+    echo "Cannot run spread because submodule 'snapd-testing-tools' does not exist. Fetch with 'git submodule update --init' and rerun spread."
+    exit 1
+  fi
+  chown -R root:root "$PROJECT_PATH"
+
+  . "$TOOLS_DIR/deps.sh"
+
+  snap refresh --hold
+  if systemctl is-enabled unattended-upgrades.service; then
+    systemctl stop unattended-upgrades.service
+    systemctl mask unattended-upgrades.service
+  fi
+
+  bootstrap_python_venv
+  install_lxd
+
+restore: |
+  apt autoremove -y --purge
+  rm -Rf "$PROJECT_PATH"
+  mkdir -p "$PROJECT_PATH"
+kill-timeout: 240m
+
+workers: 1

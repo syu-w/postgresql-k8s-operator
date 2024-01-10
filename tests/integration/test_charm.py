@@ -397,7 +397,7 @@ async def test_redeploy_charm_same_model(ops_test: OpsTest):
 async def test_redeploy_charm_same_model_after_forcing_removal(ops_test: OpsTest) -> None:
     """Redeploy the charm in the same model to test that it works after a forceful removal."""
     return_code, _, stderr = await ops_test.juju(
-        "remove-application", APP_NAME, "--destroy-storage", "--force", "--no-wait"
+        "remove-application", APP_NAME, "--destroy-storage", "--force", "--no-wait", "--no-prompt"
     )
     if return_code != 0:
         assert False, stderr
