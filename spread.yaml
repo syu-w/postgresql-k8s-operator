@@ -45,18 +45,19 @@ backends:
       SPREAD_EXTERNAL_ADDRESS: '$(HOST: echo "${SPREAD_EXTERNAL_ADDRESS:-localhost:8022}")'
       TRUST_TEST_KEYS: "false"
     allocate: |
+      multipass_count=$(flock -x .spread_multipass -c 'COUNT=$(cat .spread_multipass); echo $(($COUNT + 1)) | tee .spread_multipass')
       # SPREAD_SYSTEM has the following format here 'ubuntu-XX.YY-64' and gets
       # translated to an image XX.YY.
       image="$(echo $SPREAD_SYSTEM | sed -e 's/ubuntu-\(.*\)-64/\1/')"
       spread_name="$(echo ${image} | sed -e 's/\.//g')"
       project_name="$(basename $(pwd))"
-      instance_name="spread-${project_name}-${spread_name}"
+      instance_name="spread-${project_name}-${spread_name}-${multipass_count}"
 
       if [ -z "${image}" ]; then
         FATAL "$SPREAD_SYSTEM is not supported!"
       fi
 
-      multipass launch --cpus 4 --memory 8G --disk 25G --name "$instance_name" "$image"
+      multipass launch --cpus 4 --memory 4G --disk 20G --name "$instance_name" "$image"
 
       # Get the IP from the instance
       ip=$(multipass info --format csv "$instance_name" | tail -1 | cut -d\, -f3)
@@ -71,26 +72,23 @@ backends:
 
       ADDRESS "$ip"
     discard: |
-      image="$(echo $SPREAD_SYSTEM | sed -e 's/ubuntu-\(.*\)-64/\1/')"
-      spread_name="$(echo ${image} | sed -e 's/\.//g')"
-      project_name="$(basename $(pwd))"
-      instance_name="spread-${project_name}-${spread_name}"
-
-      if [ -z "${image}" ]; then
-        FATAL "$SPREAD_SYSTEM is not supported!"
+      instance_name=$(multipass list --format csv | grep ",${SPREAD_SYSTEM_ADDRESS}," | cut -f1 -d\,)
+      if [[ ! -z "$instance_name" ]]; then
+        multipass delete --purge "${instance_name}"
       fi
-
-      multipass delete --purge "${instance_name}"
     systems:
       - ubuntu-22.04-64:
           username: root
           password: spread-ubuntu
-          workers: 1
+          workers: 6
 
       #- ubuntu-20.04-64:
       #    username: root
       #    password: spread-ubuntu
       #    workers: 1
+  #lxd:
+  #  systems:
+  #    - ubuntu-22.04
 
 suites:
   tests/spread/charm/:
